@@ -81,7 +81,6 @@ ui <- dashboardPage(
     )
   ),
   dashboardBody(
-    # Ensure wide tables scroll instead of overflowing
     tags$head(tags$style(HTML('
       .box-body { overflow-x: auto; }
       table.dataTable td, table.dataTable th { white-space: normal !important; word-break: break-word; }
@@ -178,10 +177,8 @@ ui <- dashboardPage(
 server <- function(input, output, session) {
   ds <- reactive(load_cleaned())
 
-  # Helpers for ordering AMD return periods
   amd_period_levels <- c('7-Day','30-Day','YTD','3-Month','6-Month','1-Year','2-Year','5-Year')
 
-  # --- Reddit helpers (comment-body-driven insights) ---
   norm_id <- function(x) {
     x <- as.character(x)
     x <- str_replace(x, '^t[0-9]_+', '')
@@ -198,7 +195,6 @@ server <- function(input, output, session) {
     d
   })
 
-  # Build tokens using tidytext if available; fallback to simple split
   build_tokens <- function(df) {
     if (nrow(df) == 0) return(tibble(post_id=character(), id=character(), word=character()))
     out <- df %>%
@@ -209,7 +205,6 @@ server <- function(input, output, session) {
     return(out)
   }
 
-  # Sentiment tokens for analysis (word-level sentiment labels)
   reddit_sentiment_tokens <- reactive({
     d <- reddit_with_post_id()
     if (nrow(d) == 0) return(tibble())
@@ -220,7 +215,6 @@ server <- function(input, output, session) {
     toks %>% inner_join(bing, by='word')
   })
 
-  # Simple brand/entity extraction
   brand_patterns <- tibble(
     brand = c('AMD','Intel','NVIDIA','Ryzen','Core i','X3D','Zen 5','Zen 4','Arrow Lake','Raptor Lake'),
     pattern = c('\\bamd\\b','\\bintel\\b','nvidia|geforce|nvda','ryzen','core\\s?i[3579]','x3d','zen\\s?5','zen\\s?4','arrow\\s+lake','raptor\\s+lake')
@@ -236,7 +230,6 @@ server <- function(input, output, session) {
     brand_counts
   })
 
-  # Sentiment using tidytext bing lexicon if available; fallback to zero
   reddit_sentiment <- reactive({
     d <- reddit_with_post_id()
     if (nrow(d) == 0) return(tibble())
@@ -252,7 +245,6 @@ server <- function(input, output, session) {
     return(sent)
   })
 
-  # Overview plots + insights
   output$plot_amd_returns <- renderPlotly({
     d <- ds()$amd_returns
     req(nrow(d) > 0)
@@ -334,7 +326,6 @@ server <- function(input, output, session) {
   output$plot_reddit_scores <- renderPlotly({ NULL })
   output$insight_reddit <- renderUI({ NULL })
 
-  # Overview: Reddit sentiment distribution across all comments
   output$plot_reddit_sent_overview <- renderPlotly({
     sent <- reddit_sentiment()
     req(nrow(sent) > 0)
@@ -351,7 +342,6 @@ server <- function(input, output, session) {
     HTML(sprintf('<b>Insight:</b> Overall average sentiment is %0.2f (0 = neutral).', avg))
   })
 
-  # AMD Tab
   output$plot_amd_returns2 <- renderPlotly({
     d <- ds()$amd_returns
     req(nrow(d) > 0)
@@ -393,7 +383,6 @@ server <- function(input, output, session) {
     ggplotly(p)
   })
 
-  # CPU Tab
   output$plot_cpu_scatter <- renderPlotly({
     d <- ds()$cpu_overall
     req(nrow(d) > 0)
@@ -435,7 +424,6 @@ server <- function(input, output, session) {
     )
   })
 
-  # Intel Tab
   output$plot_intel_segments2 <- renderPlotly({
     d <- ds()$intel_segments
     req(nrow(d) > 0)
@@ -464,8 +452,6 @@ server <- function(input, output, session) {
     )
   })
 
-  # Reddit Tab
-  # Reddit Tab: Post selector
   output$reddit_post_selector <- renderUI({
     d <- reddit_with_post_id()
     req(nrow(d) > 0)
@@ -479,7 +465,7 @@ server <- function(input, output, session) {
     req(nrow(d) > 0, !is.null(input$reddit_post))
     d %>% filter(!is_post, post_id == input$reddit_post)
   })
-  # Reddit Tab: top sentiment-bearing words within selected post
+
   output$plot_reddit_words <- renderPlotly({
     cmts <- selected_comments(); req(nrow(cmts) > 0)
     toks <- reddit_sentiment_tokens(); req(nrow(toks) > 0)
