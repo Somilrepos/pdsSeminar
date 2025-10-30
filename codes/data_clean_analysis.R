@@ -1,21 +1,15 @@
-#!/usr/bin/env Rscript
-
-suppressPackageStartupMessages({
-  library(readr)
-  library(dplyr)
-  library(stringr)
-  library(tidyr)
-  library(purrr)
-  library(lubridate)
-  library(glue)
-})
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(glue)
 
 data_dir <- file.path('data')
 clean_dir <- file.path(data_dir, 'cleaned')
-output_dir <- file.path('outputs')
 
 dir.create(clean_dir, showWarnings = FALSE, recursive = TRUE)
-dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
 parse_currency <- function(x) {
   x %>%
@@ -23,6 +17,7 @@ parse_currency <- function(x) {
     str_replace_all('\\(', '-') %>%
     str_replace_all('\\)', '') %>%
     str_to_lower() %>%
+    
     str_replace_all('billion|million|usd', '') %>%
     str_trim() %>%
     str_extract('-?[0-9]+\\.?[0-9]*') %>%
@@ -153,7 +148,7 @@ write_csv(cpu_overall_clean, file.path(clean_dir, 'cpuOverall_clean.csv'))
 cpu_multi <- read_csv(file.path(data_dir, 'cpuMulti.csv'), show_col_types = FALSE)
 
 cpu_multi_clean <- cpu_multi %>%
-  rename(product = X1) %>%
+  rename(product = any_of(c('X1', '...1'))) %>%
   mutate(
     list_cols = map(product, ~ split_cpu_price(.x)),
     model = map_chr(list_cols, 'model'),
@@ -171,7 +166,7 @@ write_csv(cpu_multi_clean, file.path(clean_dir, 'cpuMulti_clean.csv'))
 cpu_single <- read_csv(file.path(data_dir, 'cpuSingle.csv'), show_col_types = FALSE)
 
 cpu_single_clean <- cpu_single %>%
-  rename(product = X1) %>%
+  rename(product = tidyselect::any_of(c('X1', '...1'))) %>%
   mutate(
     list_cols = map(product, ~ split_cpu_price(.x)),
     model = map_chr(list_cols, 'model'),
@@ -259,7 +254,8 @@ intel_balance_clean <- intel_balance_raw %>%
   mutate(
     fy_2024 = parse_currency(fy_2024),
     fy_2023 = parse_currency(fy_2023)
-  )
+  ) %>%
+  select(metric, fy_2024, fy_2023)
 
 write_csv(intel_balance_clean, file.path(clean_dir, 'intel_balance_clean.csv'))
 
@@ -290,74 +286,3 @@ reddit_clean <- reddit_data %>%
   )
 
 write_csv(reddit_clean, file.path(clean_dir, 'reddit_clean.csv'))
-
-amd_stock_summary <- amd_returns_clean %>%
-  summarise(
-    avg_percent_change = mean(percent_change),
-    worst_period = period[which.min(percent_change)],
-    worst_pct = min(percent_change),
-    best_period = period[which.max(percent_change)],
-    best_pct = max(percent_change)
-  )
-
-amd_financial_summary <- amd_financials_clean %>%
-  mutate(q4_yoy = (q4_2024 - q4_2023) / abs(q4_2023) * 100) %>%
-  select(metric, q4_yoy, yoy_change)
-
-cpu_value_summary <- cpu_overall_clean %>%
-  arrange(desc(value_score)) %>%
-  slice_head(n = 5) %>%
-  select(model, lowest_price, gaming_score, value_score)
-
-intel_segment_summary <- intel_segments %>%
-  arrange(desc(fy_revenue)) %>%
-  select(segment, fy_revenue, fy_change)
-
-reddit_summary <- reddit_clean %>%
-  group_by(is_post) %>%
-  summarise(
-    avg_score = mean(score, na.rm = TRUE),
-    total_entries = n()
-  ) %>%
-  ungroup()
-
-post_score <- reddit_summary$avg_score[reddit_summary$is_post]
-if (length(post_score) == 0) {
-  post_score <- NA_real_
-} else {
-  post_score <- post_score[1]
-}
-comment_score <- reddit_summary$avg_score[!reddit_summary$is_post]
-if (length(comment_score) == 0) {
-  comment_score <- NA_real_
-} else {
-  comment_score <- comment_score[1]
-}
-
-cpu_top <- if (nrow(cpu_value_summary) > 0) cpu_value_summary[1, ] else tibble(model = NA_character_, lowest_price = NA_real_, gaming_score = NA_real_, value_score = NA_real_)
-intel_top_segment <- if (nrow(intel_segment_summary) > 0) intel_segment_summary[1, ] else tibble(segment = NA_character_, fy_revenue = NA_real_, fy_change = NA_real_)
-
-insights <- tribble(
-  ~topic, ~insight,
-  'AMD Stock Momentum', glue('Average recent percent change of {format_percent_value(amd_stock_summary$avg_percent_change, 2)} with best period {amd_stock_summary$best_period} ({format_percent_value(amd_stock_summary$best_pct, 2)}).'),
-  'AMD Financial Growth', glue('Q4 revenue year-over-year change of {format_percent_value(amd_financial_summary$q4_yoy[amd_financial_summary$metric == "Revenue"], 2)} compared with reported {format_percent_value(amd_financial_summary$yoy_change[amd_financial_summary$metric == "Revenue"], 2)}.'),
-  'CPU Value Leaders', glue('Top gaming value chip {cpu_top$model} priced at {format_dollar(cpu_top$lowest_price)} delivering {format_percent_value(cpu_top$gaming_score, 2)} of flagship performance.'),
-  'Intel Segment Scale', glue('Largest FY revenue segment {intel_top_segment$segment} contributing {format_dollar(intel_top_segment$fy_revenue, 1)}B with {format_percent_value(intel_top_segment$fy_change, 1)} YoY change.'),
-  'Reddit Engagement', glue('Average post score {round(post_score, 1)} vs comment score {round(comment_score, 1)} across {sum(reddit_summary$total_entries)} entries.')
-)
-
-write_csv(insights, file.path(output_dir, 'analysis_summary.csv'))
-
-cpu_analysis <- cpu_value_summary %>%
-  mutate(rank = row_number())
-
-write_csv(cpu_analysis, file.path(output_dir, 'cpu_value_top5.csv'))
-
-reddit_top_authors <- reddit_clean %>%
-  filter(!is.na(author)) %>%
-  count(author, sort = TRUE) %>%
-  slice_head(n = 10)
-
-write_csv(reddit_top_authors, file.path(output_dir, 'reddit_top_authors.csv'))
-
-message('Data cleaning complete. Outputs saved to data/cleaned and outputs directories.')

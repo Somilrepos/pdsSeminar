@@ -1,0 +1,306 @@
+need <- c(
+  "tidyverse","janitor","stringr","purrr","lubridate","scales",
+  "rlang","fs"
+)
+to_get <- need[!(need %in% installed.packages()[,"Package"])]
+if (length(to_get)) install.packages(to_get, dependencies = TRUE)
+invisible(lapply(need, library, character.only = TRUE))
+
+# We'll try tabulizer for table extraction
+tabulizer_ok <- requireNamespace("tabulizer", quietly = TRUE)
+pdftools_ok  <- requireNamespace("pdftools",  quietly = TRUE)
+
+# ---- 1) Point to your PDF -----------------------------------------------------
+# Put the PDF in your working directory or set an absolute path here:
+pdf_file <- "C:/Users/somil/Downloads/Intel-Core-Desktop-Boxed-Processors-Comparison-Chart.pdf"
+
+if (!file.exists(pdf_file)) {
+  stop("Couldn't find the PDF: ", pdf_file, "\nPut it in getwd(): ", getwd())
+}
+
+# ---- 2) Extract raw rows from the PDF ----------------------------------------
+# Preferred path: tabulizer (tables). Fallback: pdftools (lines) with heuristic parsing.
+extract_tables_safely <- function(pdf_path) {
+  if (!tabulizer_ok) {
+    msg <- paste0(
+      "Package `tabulizer` not available.\n",
+      "Install Java (https://adoptium.net) then in R:\n",
+      "  install.packages('rJava')\n",
+      "  remotes::install_github('ropensci/tabulizer')\n",
+      "After that, re-run this script."
+    )
+    stop(msg)
+  }
+  message("Extracting tables with tabulizer (this can take ~30–90 seconds for multi-page PDFs)...")
+  tabs <- tabulizer::extract_tables(
+    file = pdf_path,
+    pages = NULL,         # all pages
+    method = "stream",    # works well for column-aligned specs
+    guess  = TRUE
+  )
+  # Coerce each to tibble, drop empty ones
+  tabs <- tabs %>%
+    purrr::map(~as_tibble(.x, .name_repair = "minimal")) %>%
+    purrr::discard(~ncol(.x) == 0 || nrow(.x) == 0)
+  tabs
+}
+
+tabs <- extract_tables_safely(pdf_file)
+
+# ---- 3) Normalize headers & bind ---------------------------------------------
+# Some pages have headers, some don't, and weird hyphen/encoding characters.
+# We'll detect the best header row, then enforce a standard set.
+
+# A robust "canonical" header we expect (order matters)
+canon_header <- c(
+  "Processor Number","Intel Product Brand","Performance Tier","Generation",
+  "Year Launched","# of Cores","# of P-cores","# of E-cores","# of Threads",
+  "Max Turbo Frequency (GHz)","Performance-core Base Frequency (GHz)",
+  "Efficient-core Base Frequency (GHz)","Processor Base Frequency (GHz)",
+  "Cache (MB)","Processor Base Power (W)",
+  "Max Memory Size (dependent on memory type) GB","Memory Types (MT/s)",
+  "Max # of PCI Express Lanes","Supported Socket","Intel Processor Graphics",
+  "Graphics Max Dynamic Frequency (GHz)","Intel Turbo Boost Max Technology 3.0",
+  "Intel vPro Platform Eligibility","Max Resolution for HDMI, DP, eDP"
+)
+
+clean_header_text <- function(x) {
+  x %>%
+    str_replace_all("\uFFFE|\uFEFF|\u200B|\u00AD", "") %>%    # odd soft hyphens/zero-width
+    str_replace_all("P.?cores", "P-cores") %>%
+    str_replace_all("E.?cores", "E-cores") %>%
+    str_squish()
+}
+
+# Try to find a header-like row in page 1 table with most header keywords
+guess_header <- function(tbl) {
+  # Look in first ~5 rows for header-y content
+  head_rows <- tbl %>% head(6)
+  scores <- apply(head_rows, 1, function(r) {
+    txt <- paste(r, collapse = " ")
+    sum(str_detect(tolower(txt),
+                   c("processor", "brand", "generation", "launched", "cores", "threads",
+                     "turbo", "frequency", "cache", "power", "memory", "socket", "graphics", "hdmi", "dp", "edp")))
+  })
+  idx <- which.max(scores)
+  head_rows[idx, , drop = FALSE]
+}
+
+# Get a header candidate from the first table
+hdr_raw <- guess_header(tabs[[1]]) %>% unlist(use.names = FALSE)
+hdr_raw <- clean_header_text(hdr_raw)
+
+# If too short or messy, fall back to canonical header
+if (length(hdr_raw) < 10) hdr_raw <- canon_header
+
+# Length-correct: pad or trim to match canonical size
+fix_length <- function(x, target_len) {
+  if (length(x) < target_len) c(x, rep(NA, target_len - length(x)))
+  else x[seq_len(target_len)]
+}
+hdr_fixed <- fix_length(hdr_raw, length(canon_header))
+
+# For each table: make header, coerce to canon columns by length
+harmonize_table <- function(tbl) {
+  tbl <- tbl %>% mutate(across(everything(), ~clean_header_text(as.character(.x))))
+  colnames(tbl) <- paste0("V", seq_len(ncol(tbl)))
+  # Assume first row could be header duplicate; drop if it looks like header
+  first_row_txt <- paste(tbl[1,] %>% unlist(), collapse = " ")
+  looks_like_header <- str_detect(tolower(first_row_txt), "processor") &&
+    str_detect(tolower(first_row_txt), "cores")
+  if (looks_like_header) tbl <- tbl[-1, , drop = FALSE]
+  
+  # Now force to canonical width
+  if (ncol(tbl) != length(canon_header)) {
+    # Try to merge trailing overflow columns into the last one (max-resolution)
+    if (ncol(tbl) > length(canon_header)) {
+      keep <- tbl[, seq_len(length(canon_header)-1), drop = FALSE]
+      tailmerged <- tbl[, seq(length(canon_header), ncol(tbl)), drop = FALSE] %>%
+        unite("maxres_merge", everything(), sep = " ", na.rm = TRUE)
+      tbl <- bind_cols(keep, tailmerged)
+    } else {
+      # pad with NAs
+      pad <- matrix(NA_character_, nrow(tbl), length(canon_header) - ncol(tbl))
+      tbl <- as_tibble(cbind(tbl, pad))
+    }
+  }
+  colnames(tbl) <- canon_header
+  tbl
+}
+
+cpu_raw <- tabs %>% purrr::map(harmonize_table) %>% bind_rows()
+
+# Drop obvious footer noise rows (start with 'Page' or are just HDMI/DP/eDP lines)
+cpu_raw <- cpu_raw %>%
+  filter(
+    !if_any(everything(), ~str_detect(.x, "^\\s*Page\\s*\\d+")) ,
+    !if_any(everything(), ~str_detect(.x, "^\\s*(HDMI:|DP:|eDP:)"))
+  )
+
+# Keep only rows that look like actual processor entries
+looks_like_cpu <- function(x) {
+  # Processor Number patterns: i3/i5/i7/i9-12345, 12900K/KF/F/T, or Core Ultra numbers like 285/265/245 etc.
+  str_detect(x, "^(i[3579]-\\d{4,5}[A-Z]{0,2}|\\d{3}[A-Z]?)$")
+}
+cpu_raw <- cpu_raw %>% filter(looks_like_cpu(`Processor Number`) | !is.na(`Year Launched`))
+
+# ---- 4) Clean & type columns --------------------------------------------------
+num <- readr::parse_number
+
+tfy <- function(x) {
+  x <- tolower(x)
+  dplyr::case_when(
+    str_detect(x, "yes|true|y") ~ TRUE,
+    str_detect(x, "no|false|n") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+# Extract DDR5/DDR4 speeds (MT/s) from "Memory Types (MT/s)"
+extract_memory_mtps <- function(s) {
+  d5 <- str_match(s, "(?i)DDR5\\s*([\\d,\\.]+)\\s*MT/s")[,2] %>% num()
+  d4 <- str_match(s, "(?i)DDR4\\s*([\\d,\\.]+)\\s*MT/s")[,2] %>% num()
+  tibble(ddr5_mtps = d5, ddr4_mtps = d4)
+}
+
+mem_speeds <- extract_memory_mtps(cpu_raw$`Memory Types (MT/s)`)
+
+cpu <- cpu_raw %>%
+  mutate(
+    across(
+      c("# of Cores","# of P-cores","# of E-cores","# of Threads","Year Launched",
+        "Max # of PCI Express Lanes"),
+      ~suppressWarnings(as.integer(num(.x)))
+    ),
+    `Max Turbo Frequency (GHz)`                    = num(`Max Turbo Frequency (GHz)`),
+    `Performance-core Base Frequency (GHz)`        = num(`Performance-core Base Frequency (GHz)`),
+    `Efficient-core Base Frequency (GHz)`          = num(`Efficient-core Base Frequency (GHz)`),
+    `Processor Base Frequency (GHz)`               = num(`Processor Base Frequency (GHz)`),
+    `Cache (MB)`                                   = num(`Cache (MB)`),
+    `Processor Base Power (W)`                     = num(`Processor Base Power (W)`),
+    `Max Memory Size (dependent on memory type) GB`= num(`Max Memory Size (dependent on memory type) GB`),
+    `Graphics Max Dynamic Frequency (GHz)`         = num(`Graphics Max Dynamic Frequency (GHz)`),
+    `Intel Turbo Boost Max Technology 3.0`         = tfy(`Intel Turbo Boost Max Technology 3.0`),
+    `Intel vPro Platform Eligibility`              = tfy(`Intel vPro Platform Eligibility`),
+    has_integrated_graphics                        = if_else(is.na(`Intel Processor Graphics`) | `Intel Processor Graphics`=="No", FALSE, TRUE),
+    generation                                     = as.integer(num(Generation)),
+    brand_slim                                     = str_remove(`Intel Product Brand`, "Intel®\\s*") %>% str_squish()
+  ) %>%
+  bind_cols(mem_speeds) %>%
+  clean_names()
+
+# Remove blatant non-rows: missing processor number & most essential fields
+cpu <- cpu %>% filter(!is.na(processor_number) | !is.na(year_launched))
+
+# ---- 5) Save cleaned data -----------------------------------------------------
+fs::dir_create("data")
+readr::write_csv(cpu, "data/intel_desktop_clean.csv")
+message("Saved cleaned dataset to data/intel_desktop_clean.csv")
+
+# ---- 6) Analysis snippets -----------------------------------------------------
+# a) Cores/threads trend by launch year
+cores_year <- cpu %>%
+  filter(!is.na(year_launched)) %>%
+  group_by(year_launched) %>%
+  summarise(
+    median_cores   = median(x = `x_of_cores`, na.rm = TRUE),
+    median_threads = median(x = `x_of_threads`, na.rm = TRUE),
+    n_models       = n(),
+    .groups = "drop"
+  )
+
+# b) TDP vs Threads (Base Power vs Threads)
+tdp_vs_threads <- cpu %>%
+  filter(!is.na(processor_base_power_w), !is.na(x_of_threads))
+
+# c) Memory speed over time (DDR5, DDR4)
+mem_year <- cpu %>%
+  filter(!is.na(year_launched) & (!is.na(ddr5_mtps) | !is.na(ddr4_mtps))) %>%
+  summarise(
+    ddr5 = median(ddr5_mtps, na.rm = TRUE),
+    ddr4 = median(ddr4_mtps, na.rm = TRUE),
+    .by = year_launched
+  ) %>%
+  pivot_longer(cols = c(ddr5, ddr4), names_to = "memory", values_to = "mtps")
+
+# d) Top turbo chips
+top_turbo <- cpu %>%
+  filter(!is.na(max_turbo_frequency_ghz)) %>%
+  slice_max(max_turbo_frequency_ghz, n = 15) %>%
+  mutate(processor_number = fct_reorder(processor_number, max_turbo_frequency_ghz))
+
+# e) P-core vs E-core mix over time
+pe_year <- cpu %>%
+  filter(!is.na(year_launched)) %>%
+  summarise(
+    p = median(x_of_p_cores, na.rm = TRUE),
+    e = median(x_of_e_cores, na.rm = TRUE),
+    .by = year_launched
+  ) %>%
+  pivot_longer(c(p,e), names_to = "core_type", values_to = "median_count")
+
+# ---- 7) Visualizations --------------------------------------------------------
+fs::dir_create("plots")
+
+# 1) Median cores & threads by launch year
+p1 <- ggplot(cores_year, aes(year_launched)) +
+  geom_line(aes(y = median_cores)) +
+  geom_point(aes(y = median_cores)) +
+  geom_line(aes(y = median_threads), linetype = 2) +
+  geom_point(aes(y = median_threads), shape = 21, fill = NA) +
+  scale_x_continuous(breaks = scales::pretty_breaks()) +
+  labs(
+    title = "Median Cores & Threads by Launch Year",
+    x = "Year launched", y = "Count",
+    caption = "Dashed = Threads; Solid = Cores"
+  ) +
+  theme_minimal()
+ggsave("plots/01_cores_threads_by_year.png", p1, width = 8, height = 5, dpi = 160)
+
+# 2) Base Power (W) vs Threads
+p2 <- ggplot(tdp_vs_threads, aes(x = x_of_threads, y = processor_base_power_w)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Processor Base Power vs Threads",
+    x = "Threads", y = "Base power (W)"
+  ) +
+  theme_minimal()
+ggsave("plots/02_tdp_vs_threads.png", p2, width = 7, height = 5, dpi = 160)
+
+# 3) Memory speed trend (median) over time
+p3 <- ggplot(mem_year, aes(x = year_launched, y = mtps, group = memory)) +
+  geom_line() + geom_point() +
+  facet_wrap(~memory, scales = "free_y") +
+  scale_x_continuous(breaks = scales::pretty_breaks()) +
+  labs(
+    title = "Median DDR5 / DDR4 MT/s by Launch Year",
+    x = "Year launched", y = "MT/s"
+  ) +
+  theme_minimal()
+ggsave("plots/03_memory_mtps_trend.png", p3, width = 8, height = 5, dpi = 160)
+
+# 4) Top 15 by Max Turbo Frequency
+p4 <- ggplot(top_turbo, aes(x = processor_number, y = max_turbo_frequency_ghz)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 15 Processors by Max Turbo Frequency",
+    x = NULL, y = "Max turbo (GHz)"
+  ) +
+  theme_minimal()
+ggsave("plots/04_top_turbo.png", p4, width = 7, height = 6, dpi = 160)
+
+# 5) Median P-core vs E-core counts over time
+p5 <- ggplot(pe_year, aes(x = year_launched, y = median_count, group = core_type)) +
+  geom_line() + geom_point() +
+  facet_wrap(~core_type, nrow = 1, scales = "free_y") +
+  scale_x_continuous(breaks = scales::pretty_breaks()) +
+  labs(
+    title = "Median P-core and E-core Counts by Launch Year",
+    x = "Year launched", y = "Median core count"
+  ) +
+  theme_minimal()
+ggsave("plots/05_p_vs_e_core_trend.png", p5, width = 9, height = 4.8, dpi = 160)
+
+message("Done. Plots saved in the 'plots/' folder and clean CSV in 'data/'.")

@@ -1,0 +1,10 @@
+metric,gaap_current,gaap_prior,gaap_change,nongaap_current,nongaap_prior,nongaap_change
+Revenue ($B),14.3,15.4,-7,NA,NA,NA
+Gross margin,39.2,45.7,-6.5,42.1,48.8,-6.7
+R&D and MG&A ($B),5.1,5.6,-9,4.6,4.9,-6
+Operating margin (loss),2.9,16.8,-13.9,9.6,16.7,-7.1
+Tax rate,125.5,4.6,120.9,13,13,NA
+Net income (loss),NA,NA,NA,NA,NA,NA
+attributable to Intel ($B),-0.1,2.7,-105,0.6,2.3,-75
+Earnings (loss) per share,NA,NA,NA,NA,NA,NA
+attributable to Intel—,-0.03,0.63,-105,0.13,0.54,-76
