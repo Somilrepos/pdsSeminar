@@ -9,6 +9,7 @@ library(lubridate)
 library(ggplot2)
 library(plotly)
 library(DT)
+library(tidytext)
 
 resolve_base_dir <- function() {
   candidates <- c('.', '..', '../..', '../../..')
