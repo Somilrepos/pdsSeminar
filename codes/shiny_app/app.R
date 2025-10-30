@@ -143,11 +143,11 @@ ui <- dashboardPage(
         fluidRow(
           box(width = 6, title = 'Segments (FY Revenue)', solidHeader = TRUE,
               plotlyOutput('plot_intel_segments2')),
-          box(width = 6, title = 'Margins & Income (FY)', solidHeader = TRUE,
+          box(width = 6, title = 'Margins & Income (FY) (in $Millions)', solidHeader = TRUE,
               DTOutput('table_intel_margin'))
         ),
         fluidRow(
-          box(width = 12, title = 'Income Statement Highlights', solidHeader = TRUE,
+          box(width = 12, title = 'Income Statement Highlights (in $Millions)', solidHeader = TRUE,
               DTOutput('table_intel_income'))
         )
       ),
@@ -256,15 +256,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  output$insight_amd_returns <- renderUI({
-    d <- ds()$amd_returns
-    req(nrow(d) > 0)
-    best <- d %>% filter(percent_change == max(percent_change, na.rm = TRUE)) %>% slice(1)
-    worst <- d %>% filter(percent_change == min(percent_change, na.rm = TRUE)) %>% slice(1)
-    HTML(sprintf('<b>Insight:</b> Best period %s (%s), worst %s (%s).',
-                 best$period, format_percent_value(best$percent_change,1),
-                 worst$period, format_percent_value(worst$percent_change,1)))
-  })
+  
 
   has_cols <- function(df, cols) all(cols %in% names(df))
 
@@ -279,15 +271,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  output$insight_cpu_value <- renderUI({
-    d <- ds()$cpu_overall
-    req(nrow(d) > 0)
-    req(has_cols(d, c('gaming_score','lowest_price','model')))
-    d <- d %>% mutate(value_score = gaming_score/lowest_price) %>% filter(is.finite(value_score)) %>% arrange(desc(value_score))
-    top <- d %>% slice(1)
-    HTML(sprintf('<b>Insight:</b> %s offers the top value at %s with gaming score %s.',
-                 top$model, format_dollar(top$lowest_price,0), format_percent_value(top$gaming_score,2)))
-  })
+  
 
   output$plot_amd_financials <- renderPlotly({
     d <- ds()$amd_financials
@@ -298,14 +282,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  output$insight_amd_fin <- renderUI({
-    d <- ds()$amd_financials
-    req(nrow(d) > 0)
-    rev_yoy <- d$yoy_change[d$metric == 'Revenue'][1]
-    HTML(sprintf('<b>Insight:</b> Revenue YoY change reported at %s; Gross Profit and Operating Income show notable expansion.',
-                 format_percent_value(rev_yoy,2)))
-  })
-
+  
   output$plot_intel_segments <- renderPlotly({
     d <- ds()$intel_segments
     req(nrow(d) > 0)
@@ -315,16 +292,9 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p, tooltip = c('x','y','text'))
   })
-  output$insight_intel_segments <- renderUI({
-    d <- ds()$intel_segments
-    req(nrow(d) > 0)
-    top <- d %>% arrange(desc(fy_revenue)) %>% slice(1)
-    HTML(sprintf('<b>Insight:</b> %s leads with %sB FY revenue, YoY %s.',
-                 top$segment, formatC(top$fy_revenue, format='f', digits=1), format_percent_value(top$fy_change,1)))
-  })
+  
 
   output$plot_reddit_scores <- renderPlotly({ NULL })
-  output$insight_reddit <- renderUI({ NULL })
 
   output$plot_reddit_sent_overview <- renderPlotly({
     sent <- reddit_sentiment()
@@ -335,12 +305,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  output$insight_reddit_sent_overview <- renderUI({
-    sent <- reddit_sentiment()
-    req(nrow(sent) > 0)
-    avg <- mean(sent$sentiment, na.rm = TRUE)
-    HTML(sprintf('<b>Insight:</b> Overall average sentiment is %0.2f (0 = neutral).', avg))
-  })
+  
 
   output$plot_amd_returns2 <- renderPlotly({
     d <- ds()$amd_returns
