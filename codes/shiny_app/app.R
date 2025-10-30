@@ -26,8 +26,6 @@ data_dir <- file.path(base_dir, 'data')
 clean_dir <- file.path(base_dir, 'data', 'cleaned')
 
 ensure_clean_data <- function() {
-  # On hosted deployments, the app bundle is read-only. Expect cleaned CSVs
-  # to be included under data/cleaned in the repo. If missing, inform via console.
   needed <- c(
     'amdRev_01_clean.csv','amdRev_02_clean.csv','amdRev_03_clean.csv',
     'cpuOverall_clean.csv','cpuMulti_clean.csv','cpuSingle_clean.csv',
@@ -70,7 +68,7 @@ format_percent_value <- function(x, digits = 1) {
 }
 
 ui <- dashboardPage(
-  dashboardHeader(title = 'Seminar Insights'),
+  dashboardHeader(title = "Technology And Innovation Dashboard"),
   dashboardSidebar(
     sidebarMenu(
       menuItem('Overview', tabName = 'overview', icon = icon('chart-line')),
@@ -256,7 +254,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  
+
 
   has_cols <- function(df, cols) all(cols %in% names(df))
 
@@ -271,7 +269,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  
+
 
   output$plot_amd_financials <- renderPlotly({
     d <- ds()$amd_financials
@@ -282,7 +280,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  
+
   output$plot_intel_segments <- renderPlotly({
     d <- ds()$intel_segments
     req(nrow(d) > 0)
@@ -292,7 +290,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p, tooltip = c('x','y','text'))
   })
-  
+
 
   output$plot_reddit_scores <- renderPlotly({ NULL })
 
@@ -305,7 +303,7 @@ server <- function(input, output, session) {
       theme_minimal()
     ggplotly(p)
   })
-  
+
 
   output$plot_amd_returns2 <- renderPlotly({
     d <- ds()$amd_returns
@@ -315,7 +313,7 @@ server <- function(input, output, session) {
       labs(x=NULL, y='% Change', title='AMD Returns by Period (as of March 2025)') + theme_minimal()
     ggplotly(p)
   })
-  
+
   output$table_amd_peer <- renderDT({
     d <- ds()$amd_peer
     req(nrow(d) > 0)
