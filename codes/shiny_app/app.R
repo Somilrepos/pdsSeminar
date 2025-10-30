@@ -25,18 +25,17 @@ data_dir <- file.path(base_dir, 'data')
 clean_dir <- file.path(base_dir, 'data', 'cleaned')
 
 ensure_clean_data <- function() {
+  # On hosted deployments, the app bundle is read-only. Expect cleaned CSVs
+  # to be included under data/cleaned in the repo. If missing, inform via console.
   needed <- c(
     'amdRev_01_clean.csv','amdRev_02_clean.csv','amdRev_03_clean.csv',
     'cpuOverall_clean.csv','cpuMulti_clean.csv','cpuSingle_clean.csv',
     'intel_q4_clean.csv','intel_fy_clean.csv','intel_segments_clean.csv',
     'intel_income_clean.csv','intel_margin_clean.csv','reddit_clean.csv'
   )
-  present <- all(file.exists(file.path(clean_dir, needed)))
-  if (!present) {
-    script_path <- file.path(base_dir, 'codes','data_clean_analysis.R')
-    if (file.exists(script_path)) {
-      try(source(script_path), silent = TRUE)
-    }
+  missing <- needed[!file.exists(file.path(clean_dir, needed))]
+  if (length(missing)) {
+    message('Missing cleaned files: ', paste(missing, collapse=', '))
   }
 }
 
@@ -473,5 +472,3 @@ server <- function(input, output, session) {
     )
   })
 }
-
-shinyApp(ui, server)
