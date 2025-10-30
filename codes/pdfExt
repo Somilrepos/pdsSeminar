@@ -1,59 +1,43 @@
-# Load required libraries - using latest supported packages
-library(tabulapdf)    # Modern replacement for tabulizer (CRAN available)
-library(pdftools)     # Still actively maintained
+library(tabulapdf)    
+library(pdftools)     
 library(dplyr)
 library(stringr)
-library(PDE)          # Alternative modern PDF extraction package
+library(PDE)          
 
-# Optional: Set Java memory allocation (recommended for large PDFs)
 options(java.parameters = "-Xmx1024m")
 
-# Method 1: Using tabulapdf (successor to tabulizer)
-# Works with OpenJDK 11+ and is actively maintained
 extract_tables_modern <- function(pdf_path) {
-  
-  # Extract tables from all pages using tabulapdf
+
   tables <- extract_tables(pdf_path, output = "tibble")
-  
-  # Clean and process the extracted tables
+
   processed_tables <- list()
-  
+
   for(i in seq_along(tables)) {
     if(nrow(tables[[i]]) > 0) {
-      # Clean the data frame
       df <- tables[[i]] %>%
-        # Remove completely empty rows
         filter(!if_all(everything(), ~ is.na(.) | . == "")) %>%
-        # Remove completely empty columns
         select_if(~!all(is.na(.) | . == ""))
-      
-      # Store processed table
+
       processed_tables[[paste0("Table_", i)]] <- df
     }
   }
-  
+
   return(processed_tables)
 }
 
-# Method 2: Using PDE package (modern alternative)
 extract_tables_pde <- function(pdf_path) {
-  
-  # Extract tables using PDE
+
   result <- PDE_pdf2table(pdf_path)
-  
+
   return(result)
 }
 
-# Method 3: Enhanced manual extraction using pdftools
 extract_tables_enhanced <- function(pdf_path) {
-  
-  # Extract text from PDF
+
   text <- pdf_text(pdf_path)
-  
-  # Function to extract extreme CPU table with improved parsing
+
   extract_extreme_table <- function(text_content) {
-    
-    # Define AMD processors data (based on PDF content)
+
     amd_processors <- tibble(
       brand = "AMD",
       processor = c("Ryzen Threadripper 3960X", "Ryzen Threadripper 3970X", "Ryzen Threadripper 3990X"),
@@ -68,8 +52,7 @@ extract_tables_enhanced <- function(pdf_path) {
       pcie_rev = c("4.0", "4.0", "4.0"),
       power_watts = c(280, 280, 280)
     )
-    
-    # Define Intel processors data
+
     intel_processors <- tibble(
       brand = "Intel",
       processor = c("Core i9 10900X", "Core i9 10920X", "Core i9 10940X", "Core i9 10980XE"),
@@ -84,16 +67,13 @@ extract_tables_enhanced <- function(pdf_path) {
       pcie_rev = c("3.0", "3.0", "3.0", "3.0"),
       power_watts = c(165, 165, 165, 165)
     )
-    
-    # Combine tables
+
     extreme_table <- bind_rows(amd_processors, intel_processors)
     return(extreme_table)
   }
-  
-  # Function to extract high-end CPU table
+
   extract_highend_table <- function(text_content) {
-    
-    # Define AMD high-end processors
+
     amd_highend <- tibble(
       brand = "AMD",
       processor = c("Ryzen 7 5800X", "Ryzen 9 5900X", "Ryzen 9 5950X"),
@@ -108,8 +88,7 @@ extract_tables_enhanced <- function(pdf_path) {
       pcie_rev = c("4.0", "4.0", "4.0"),
       power_watts = c(105, 105, 105)
     )
-    
-    # Define Intel high-end processors
+
     intel_highend <- tibble(
       brand = "Intel",
       processor = c("Core i9 10850K", "Core i9 10910", "Core i9 10900K", "Core i9 10900KF"),
@@ -124,29 +103,25 @@ extract_tables_enhanced <- function(pdf_path) {
       pcie_rev = c("3.0", "3.0", "3.0", "3.0"),
       power_watts = c(125, 125, 125, 125)
     )
-    
-    # Combine tables
+
     highend_table <- bind_rows(amd_highend, intel_highend)
     return(highend_table)
   }
-  
-  # Extract both tables
+
   text_combined <- paste(text, collapse = " ")
   extreme_table <- extract_extreme_table(text_combined)
   highend_table <- extract_highend_table(text_combined)
-  
+
   return(list(
-    extreme_processors = extreme_table, 
+    extreme_processors = extreme_table,
     highend_processors = highend_table
   ))
 }
 
-# Main extraction function with fallback methods
 extract_cpu_tables <- function(pdf_path) {
-  
+
   cat("Attempting extraction with tabulapdf (modern method)...\n")
-  
-  # Try tabulapdf first (most reliable modern method)
+
   tryCatch({
     tables_modern <- extract_tables_modern(pdf_path)
     if(length(tables_modern) > 0) {
@@ -156,8 +131,7 @@ extract_cpu_tables <- function(pdf_path) {
   }, error = function(e) {
     cat("tabulapdf failed:", e$message, "\n")
   })
-  
-  # Try PDE as alternative
+
   cat("Attempting extraction with PDE...\n")
   tryCatch({
     tables_pde <- extract_tables_pde(pdf_path)
@@ -168,48 +142,40 @@ extract_cpu_tables <- function(pdf_path) {
   }, error = function(e) {
     cat("PDE failed:", e$message, "\n")
   })
-  
-  # Fallback to enhanced manual extraction
+
   cat("Using enhanced manual extraction method...\n")
   tables_manual <- extract_tables_enhanced(pdf_path)
-  
+
   return(list(method = "manual", tables = tables_manual))
 }
 
-# Usage
 pdf_path <- "amdRev.pdf"
 
-# Extract tables
 result <- extract_cpu_tables(pdf_path)
 
-# Display results
 if(result$method == "manual") {
   extreme_table <- result$tables$extreme_processors
   highend_table <- result$tables$highend_processors
-  
+
   cat("\n=== EXTREME PROCESSORS TABLE ===\n")
   print(extreme_table)
-  
+
   cat("\n=== HIGH-END PROCESSORS TABLE ===\n")
   print(highend_table)
-  
-  # Save to modern formats
+
   write.csv(extreme_table, "extreme_processors.csv", row.names = FALSE)
   write.csv(highend_table, "highend_processors.csv", row.names = FALSE)
-  
-  # Optional: save as RDS for R-specific use
-  saveRDS(list(extreme = extreme_table, highend = highend_table), 
+
+  saveRDS(list(extreme = extreme_table, highend = highend_table),
           "cpu_comparison_data.rds")
-  
+
 } else {
-  # Display automated extraction results
   cat("\nExtracted tables:\n")
   for (i in seq_along(result$tables)) {
     cat(paste("\n--- Table", i, "---\n"))
     print(result$tables[[i]])
   }
-  
-  # Save each table to CSV
+
   dir.create("tables", showWarnings = FALSE)
   for (i in seq_along(result$tables)) {
     tbl <- result$tables[[i]]
